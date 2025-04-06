@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Automobile CRUD App</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        h1, h2 { color: #555; }
+        #app { max-width: 800px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        form { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], select { width: calc(100% - 22px); padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px; }
+        button:hover { background-color: #0056b3; }
+        button.delete { background-color: #dc3545; }
+        button.delete:hover { background-color: #c82333; }
+        button.edit { background-color: #ffc107; color: #333; }
+        button.edit:hover { background-color: #e0a800; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #e9ecef; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .error { color: red; font-weight: bold; margin-top: 10px; }
+        .loading { text-align: center; padding: 20px; font-style: italic; color: #777; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <h1>Automobile Manager</h1>
+
+        <div id="error-message" class="error"></div>
+        <div id="loading-message" class="loading">Loading...</div>
+
+        <form id="auto-form">
+            <input type="hidden" id="auto-id">
+            <h2>Add/Edit Automobile</h2>
+            <div>
+                <label for="year">Year:</label>
+                <input type="text" id="year" required>
+            </div>
+            <div>
+                <label for="make">Make:</label>
+                <select id="make" required>
+                    <option value="">-- Select Make --</option>
+                    <!-- Options will be populated by JS -->
+                </select>
+            </div>
+            <div>
+                <label for="model">Model:</label>
+                <input type="text" id="model" required>
+            </div>
+            <div>
+                <label for="color">Color:</label>
+                <select id="color" required>
+                    <option value="">-- Select Color --</option>
+                    <!-- Options will be populated by JS -->
+                </select>
+            </div>
+            <button type="submit">Save Automobile</button>
+            <button type="button" id="cancel-edit" style="display: none; background-color: #6c757d;">Cancel Edit</button>
+        </form>
+
+        <h2>Automobile List</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Year</th>
+                    <th>Make</th>
+                    <th>Model</th>
+                    <th>Color</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="auto-list">
+                <!-- Rows will be populated by JS -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const autoForm = document.getElementById('auto-form');
+        const autoList = document.getElementById('auto-list');
+        const autoIdInput = document.getElementById('auto-id');
+        const yearInput = document.getElementById('year');
+        const makeSelect = document.getElementById('make');
+        const modelInput = document.getElementById('model');
+        const colorSelect = document.getElementById('color');
+        const cancelEditButton = document.getElementById('cancel-edit');
+        const errorMessageDiv = document.getElementById('error-message');
+        const loadingMessageDiv = document.getElementById('loading-message');
+
+        // --- Configuration ---
+        // IMPORTANT: Replace with your actual Supabase URL and Anon Key
+        // These should ideally be sourced from environment variables securely.
+        // For Vercel deployment, set SUPABASE_URL and SUPABASE_ANON_KEY
+        // in your project's Environment Variables settings.
+        // Vercel might make these available globally, or you might need a build step
+        // or serverless function to expose them safely to the client-side JS.
+        // Hardcoding keys here is insecure if your RLS is not properly configured.
+        const SUPABASE_URL = process.env.SUPABASE_URL || 'YOUR_SUPABASE_URL';
+        const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
+
+        // --- Populate Dropdowns ---
+        async function populateSelectWithOptions(selectElement, tableName, fieldName = 'name') {
+            if (!supabase) return;
+            try {
+                const { data, error } = await supabase
+                    .from(tableName)
+                    .select(fieldName)
+                    .order(fieldName, { ascending: true });
+
+                if (error) throw error;
+
+                // Clear existing options except the first placeholder
+                while (selectElement.options.length > 1) {
+                    selectElement.remove(1);
+                }
+
+                data.forEach(item => {
+                    const option = item[fieldName];
+                    const opt = document.createElement('option');
+                    opt.value = option;
+                    opt.textContent = option;
+                    selectElement.appendChild(opt);
+                });
+            } catch (error) {
+                showError(`Error loading options for ${tableName}: ${error.message}`);
+            }
+        }
+
+        async function loadDropdownData() {
+            if (!supabase) return;
+            showLoading(); // Show loading indicator while fetching dropdowns
+            try {
+                await Promise.all([
+                    populateSelectWithOptions(makeSelect, 'makes'),
+                    populateSelectWithOptions(colorSelect, 'colors')
+                ]);
+            } finally {
+                // Hide loading only after automobiles are also loaded, or handle separately
+                // Let loadAutomobiles handle the final hideLoading call
+            }
+        }
+
+        // --- Supabase Client ---
+        let supabase = null;
+        try {
+            if (!SUPABASE_URL || SUPABASE_URL === 'YOUR_SUPABASE_URL' || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY') {
+                throw new Error("Supabase URL or Anon Key is missing. Please configure environment variables.");
+            }
+            // Use the globally available supabase object from the CDN script
+            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        } catch (error) {
+            showError(`Error initializing Supabase: ${error.message}. Make sure environment variables (SUPABASE_URL, SUPABASE_ANON_KEY) are set correctly.`);
+            hideLoading();
+        }
+
+        // --- Error Handling ---
+        function showError(message) {
+            errorMessageDiv.textContent = message;
+            errorMessageDiv.style.display = 'block';
+            console.error(message);
+        }
+        function clearError() {
+            errorMessageDiv.textContent = '';
+            errorMessageDiv.style.display = 'none';
+        }
+        function showLoading() {
+            loadingMessageDiv.style.display = 'block';
+        }
+        function hideLoading() {
+            loadingMessageDiv.style.display = 'none';
+        }
+
+        // --- CRUD Functions ---
+        async function loadAutomobiles() {
+            if (!supabase) return;
+            clearError();
+            showLoading();
+            autoList.innerHTML = ''; // Clear existing list
+
+            try {
+                const { data, error } = await supabase
+                    .from('automobiles')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+
+                if (data.length === 0) {
+                    autoList.innerHTML = '<tr><td colspan="5" style="text-align:center;">No automobiles found.</td></tr>';
+                } else {
+                    data.forEach(auto => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${auto.year}</td>
+                            <td>${auto.make}</td>
+                            <td>${auto.model}</td>
+                            <td>${auto.color}</td>
+                            <td>
+                                <button class="edit" onclick="editAutomobile('${auto.id}', '${auto.year}', '${auto.make}', '${auto.model}', '${auto.color}')">Edit</button>
+                                <button class="delete" onclick="deleteAutomobile('${auto.id}')">Delete</button>
+                            </td>
+                        `;
+                        autoList.appendChild(row);
+                    });
+                }
+            } catch (error) {
+                showError(`Error loading automobiles: ${error.message}. Ensure the 'automobiles' table exists and RLS is configured.`);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function addAutomobile(year, make, model, color) {
+            if (!supabase) return;
+            clearError();
+            try {
+                const { data, error } = await supabase
+                    .from('automobiles')
+                    .insert([{ year, make, model, color }])
+                    .select(); // Return the inserted data
+
+                if (error) throw error;
+
+                console.log('Added:', data);
+                resetForm();
+                loadAutomobiles(); // Refresh list
+            } catch (error) {
+                showError(`Error adding automobile: ${error.message}`);
+            }
+        }
+
+        async function updateAutomobile(id, year, make, model, color) {
+            if (!supabase) return;
+            clearError();
+            try {
+                const { data, error } = await supabase
+                    .from('automobiles')
+                    .update({ year, make, model, color })
+                    .eq('id', id)
+                    .select(); // Return the updated data
+
+                if (error) throw error;
+
+                console.log('Updated:', data);
+                resetForm();
+                loadAutomobiles(); // Refresh list
+            } catch (error) {
+                showError(`Error updating automobile: ${error.message}`);
+            }
+        }
+
+        window.editAutomobile = (id, year, make, model, color) => {
+            // Populate form for editing
+            autoIdInput.value = id;
+            yearInput.value = year;
+            makeSelect.value = make;
+            modelInput.value = model;
+            colorSelect.value = color;
+            cancelEditButton.style.display = 'inline-block';
+            window.scrollTo(0, 0); // Scroll to top to see form
+        }
+
+        window.deleteAutomobile = async (id) => {
+            if (!supabase) return;
+            if (!confirm('Are you sure you want to delete this automobile?')) {
+                return;
+            }
+            clearError();
+            try {
+                const { error } = await supabase
+                    .from('automobiles')
+                    .delete()
+                    .eq('id', id);
+
+                if (error) throw error;
+
+                console.log('Deleted automobile with id:', id);
+                resetForm(); // Clear form if the deleted item was being edited
+                loadAutomobiles(); // Refresh list
+            } catch (error) {
+                showError(`Error deleting automobile: ${error.message}`);
+            }
+        }
+
+        // --- Form Handling ---
+        function resetForm() {
+            autoForm.reset();
+            autoIdInput.value = ''; // Clear hidden ID
+            makeSelect.value = ""; // Reset dropdowns to default
+            colorSelect.value = "";
+            cancelEditButton.style.display = 'none';
+            clearError();
+        }
+
+        autoForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            const id = autoIdInput.value;
+            const year = yearInput.value.trim();
+            const make = makeSelect.value;
+            const model = modelInput.value.trim();
+            const color = colorSelect.value;
+
+            // Basic validation
+            if (!year || !make || !model || !color) {
+                showError("All fields are required.");
+                return;
+            }
+
+            if (id) {
+                // Update existing automobile
+                updateAutomobile(id, year, make, model, color);
+            } else {
+                // Add new automobile
+                addAutomobile(year, make, model, color);
+            }
+        });
+
+        cancelEditButton.addEventListener('click', () => {
+            resetForm();
+        });
+
+        // --- Initial Load ---
+        // Only attempt to load if Supabase client initialized successfully
+        async function initializeApp() {
+            if (supabase) {
+                await loadDropdownData(); // Load dropdowns first
+                await loadAutomobiles(); // Then load automobiles
+            } else {
+                hideLoading(); // Hide loading if Supabase couldn't initialize
+            }
+        }
+
+        initializeApp();
+
+    </script>
+</body>
+</html> 
