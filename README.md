@@ -100,39 +100,47 @@ INSERT INTO public.colors (name) VALUES
 
 **Important:** The RLS policies above grant full public access for simplicity. **Review and adjust these policies based on your actual security requirements.** For any real application, you would likely want more restrictive policies, often tied to user authentication (e.g., `auth.uid() = user_id`).
 
-### 3. Vercel Deployment
+### 3. Vercel Deployment & Configuration
 
-- Create a new project on [Vercel](https://vercel.com/) and connect it to your Git repository (GitHub, GitLab, Bitbucket) containing the `index.html` file.
+- Create a new project on [Vercel](https://vercel.com/) and connect it to your Git repository (GitHub, GitLab, Bitbucket) containing the `index.html` and `api/config.js` files.
 - Configure Environment Variables:
     - In your Vercel project settings, go to **Settings** -> **Environment Variables**.
     - Add two variables:
         - `SUPABASE_URL`: Set its value to your Supabase Project URL.
         - `SUPABASE_ANON_KEY`: Set its value to your Supabase `anon` public key.
-    - **Crucially**, for these variables to be accessible in the client-side JavaScript of a static HTML file deployment, Vercel needs to expose them. Check Vercel's documentation on exposing environment variables to the browser. Often, prefixing them like `NEXT_PUBLIC_SUPABASE_URL` is required for frameworks like Next.js, but for plain HTML, Vercel might handle specific names or require a different approach (e.g., using a serverless function to provide them, or checking if Vercel automatically injects them for certain standard names). If `process.env.SUPABASE_URL` doesn't work directly in the deployed `index.html`, you might need to adjust how the variables are named in Vercel or how they are accessed in the script.
-- Deploy your project.
+    - Deploy your project. Vercel will automatically detect the `api/config.js` file and deploy it as a serverless function. The `index.html` file will fetch the credentials from this function at `/api/config` when the page loads.
 
-### 4. Local Testing (Optional)
+### 4. Local Testing
 
-- Clone the repository.
-- Open the `index.html` file in your browser.
-- **For Supabase connection:**
-    - **Option A (Insecure - Recommended only for quick local tests):** Temporarily replace the placeholder values for `SUPABASE_URL` and `SUPABASE_ANON_KEY` directly in the `<script>` section of `index.html`.
-      ```javascript
-      const SUPABASE_URL = 'YOUR_ACTUAL_SUPABASE_URL';
-      const SUPABASE_ANON_KEY = 'YOUR_ACTUAL_SUPABASE_ANON_KEY';
-      ```
-      **Remember to remove these hardcoded keys before committing or deploying!**
-    - **Option B (Better):** Use a simple local server that can inject environment variables (e.g., using Node.js with `dotenv`, or a simple Python server reading from a `.env` file). This is beyond the scope of a simple HTML file but is a more robust local development approach.
+To run this application locally, you need a way to serve the `index.html` file *and* emulate the Vercel serverless function environment for `api/config.js`.
+
+The recommended way is to use the **Vercel CLI**:
+1. Install Node.js and npm if you haven't already.
+2. Install the Vercel CLI: `npm i -g vercel`
+3. Create a `.env` file in the root of your project with your Supabase credentials:
+   ```
+   SUPABASE_URL=YOUR_ACTUAL_SUPABASE_URL
+   SUPABASE_ANON_KEY=YOUR_ACTUAL_SUPABASE_ANON_KEY
+   ```
+4. Run the development server: `vercel dev`
+5. Open the local URL provided by the Vercel CLI (usually `http://localhost:3000`) in your browser.
+
+This command (`vercel dev`) will serve your `index.html` and run the `api/config.js` function locally, injecting the environment variables from your `.env` file, accurately simulating the Vercel deployment environment.
 
 ## How it Works
 
-- The `index.html` file contains all the necessary code:
+- `index.html`: Contains the main application structure, styles, and client-side logic:
     - **HTML:** Defines the structure (form for input, table for display).
     - **CSS:** Basic styling for layout and appearance within `<style>` tags.
     - **JavaScript:**
         - Includes the Supabase client library via CDN.
+        - Fetches Supabase credentials securely from the `/api/config` endpoint on page load.
+        - Initializes the Supabase client using the fetched credentials.
         - Fetches car Makes and Colors from their respective Supabase tables to populate dropdowns.
-        - Initializes the Supabase client using the environment variables.
         - Contains functions (`loadAutomobiles`, `addAutomobile`, `updateAutomobile`, `deleteAutomobile`) to interact with the Supabase `automobiles` table.
         - Handles form submissions and button clicks to trigger CRUD operations.
-        - Updates the UI dynamically based on data from Supabase. # test-app-cars
+        - Updates the UI dynamically based on data from Supabase.
+- `api/config.js`: A Vercel serverless function.
+    - Runs server-side.
+    - Reads `SUPABASE_URL` and `SUPABASE_ANON_KEY` from environment variables (set in Vercel project settings or `.env` for local dev).
+    - Provides these credentials as a JSON response to requests made to `/api/config`.

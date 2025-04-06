@@ -91,16 +91,7 @@
         const errorMessageDiv = document.getElementById('error-message');
         const loadingMessageDiv = document.getElementById('loading-message');
 
-        // --- Configuration ---
-        // IMPORTANT: Replace with your actual Supabase URL and Anon Key
-        // These should ideally be sourced from environment variables securely.
-        // For Vercel deployment, set SUPABASE_URL and SUPABASE_ANON_KEY
-        // in your project's Environment Variables settings.
-        // Vercel might make these available globally, or you might need a build step
-        // or serverless function to expose them safely to the client-side JS.
-        // Hardcoding keys here is insecure if your RLS is not properly configured.
-        const SUPABASE_URL = process.env.SUPABASE_URL || 'YOUR_SUPABASE_URL';
-        const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
+        let supabase = null; // Will be initialized after fetching config
 
         // --- Populate Dropdowns ---
         async function populateSelectWithOptions(selectElement, tableName, fieldName = 'name') {
@@ -144,17 +135,33 @@
             }
         }
 
-        // --- Supabase Client ---
-        let supabase = null;
-        try {
-            if (!SUPABASE_URL || SUPABASE_URL === 'YOUR_SUPABASE_URL' || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY') {
-                throw new Error("Supabase URL or Anon Key is missing. Please configure environment variables.");
+        // --- Fetch Config & Initialize Supabase ---
+        async function initializeSupabase() {
+            clearError();
+            showLoading();
+            try {
+                const response = await fetch('/api/config');
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Failed to fetch config: ${response.status} ${response.statusText} - ${errorData.error || 'Unknown error'}`);
+                }
+                const config = await response.json();
+
+                if (!config.supabaseUrl || !config.supabaseAnonKey) {
+                    throw new Error("Fetched config is missing Supabase URL or Anon Key.");
+                }
+
+                // Use the globally available supabase object from the CDN script
+                supabase = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+
+                console.log('Supabase client initialized successfully.');
+                return true; // Indicate success
+
+            } catch (error) {
+                showError(`Error initializing Supabase: ${error.message}. Ensure the /api/config endpoint is working and environment variables are set.`);
+                hideLoading();
+                return false; // Indicate failure
             }
-            // Use the globally available supabase object from the CDN script
-            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        } catch (error) {
-            showError(`Error initializing Supabase: ${error.message}. Make sure environment variables (SUPABASE_URL, SUPABASE_ANON_KEY) are set correctly.`);
-            hideLoading();
         }
 
         // --- Error Handling ---
@@ -326,7 +333,8 @@
         // --- Initial Load ---
         // Only attempt to load if Supabase client initialized successfully
         async function initializeApp() {
-            if (supabase) {
+            const supabaseInitialized = await initializeSupabase();
+            if (supabaseInitialized) {
                 await loadDropdownData(); // Load dropdowns first
                 await loadAutomobiles(); // Then load automobiles
             } else {
